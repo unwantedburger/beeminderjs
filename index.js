@@ -155,6 +155,8 @@ module.exports = function (token) {
     const query = obj ? querystring.stringify(obj) : ''
     // const url = host + '/nope' + path + "?" + tokenString + query
     const url = host + path + "?" + tokenString + query
+    // errors carry the request, and people paste errors: never include the token
+    const safeUrl = url.replace(/(auth_token|access_token)=[^&]*/, '$1=REDACTED')
     const details = method == 'GET' ? {headers: {'User-Agent': useragent}} : {
       method: method,
       body: obj ? JSON.stringify(obj) : undefined,
@@ -165,7 +167,7 @@ module.exports = function (token) {
     }
     let error
     const result = await fetch(url, details).catch(err => {
-      details.url = url
+      details.url = safeUrl
       error = {
         name: 'Network error. Either beeminder.js is offline or the Beeminder API is down.',
         status: 0,
@@ -173,7 +175,7 @@ module.exports = function (token) {
       }
       throw error
     })
-    details.url = url
+    details.url = safeUrl
     const resultText = await result.text()
     let resultJson
     try {
@@ -190,8 +192,15 @@ module.exports = function (token) {
     if (result.status == 422 && ignoreDupes) { // duplicate request
       result.status = 200
     } else if (result.status > 300) {
+      const names = {
+        401: 'Unauthorized: check your auth token.',
+        404: 'Not found: check the goal slug (' + path + ').',
+        422: 'Rejected by Beeminder: ' + JSON.stringify(resultJson.errors || resultJson),
+      }
       error = {
-        name: 'Some unknown error; treat as Beeminder probably down.',
+        name: names[result.status] || (result.status >= 500
+          ? 'Server error; Beeminder is probably down.'
+          : 'Unexpected error from Beeminder.'),
         status: result.status,
         message: resultJson,
       }
